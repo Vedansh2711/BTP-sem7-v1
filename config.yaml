@@ -1,0 +1,73 @@
+# All unspecified parameters live here. See ASSUMPTIONS.md for provenance.
+seed: 0
+road: {length: 2000.0, lanes_per_dir: 2}
+rsu:  {K: 4, centers: [250.0, 750.0, 1250.0, 1750.0], radius: 300.0, height: 10.0, spacing: 500.0}
+time: {T: 150, tau: 1.0}
+mobility:
+  backend: kinematic          # kinematic | sumo (sumo = stub, see ASSUMPTIONS.md)
+  entry_mean_s: 2.0
+  speed_mean: 12.5
+  speed_std: 3.3
+  speed_max: 16.7
+  speed_min: 2.0
+  accel: 2.6
+  decel: 4.5
+  jitter_std: 0.3
+population:
+  n_max: 20                   # padded size for fixed-population experiments
+  n_icv: 8
+  n_nicv: 3
+  dynamic: false              # true for Exp3
+  flow_veh_per_h: 1000.0
+  penetration: 0.7
+  n_max_dynamic: 80
+  warmup_s: 160
+vehicle:
+  s_unit: [2.0, 4.0]          # Mbps
+  s_own: [1.0, 2.0]           # Mbps
+  c_unit: [0.2, 0.4]          # kcycles/bit
+  c_own: [0.1, 0.2]           # kcycles/bit
+  D: [5.0, 20.0]              # MB
+perception:
+  r_sense: 300.0              # CALIBRATION KNOB (Fig. 4); see calibrate_rsense.py
+  q_model: uniform            # uniform | distance
+  q_low: 0.2
+  q_high: 2.0
+  s_req: 4.0                  # Mb
+  phi_max: 3
+  sub1: wsmm                  # wsmm | sm | ga
+  transmit_only_if_selected: false
+comm: {p: 1.0, noise_dbm_hz: -174.0, bmax_hz: 20.0e+6, pl0: 128.1, pl_slope: 37.6, fading: false}
+comp: {F_ghz: 4.0}
+migration: {t_unit: 2.4e-4, d_rsu: 500.0, m_max: 3}
+aoi: {alpha: 0.5, t_req_icv: 0.5, t_req_nicv: 1.0, t_pena: 2.0, t_epena: 2.0}
+reward: {beta_rew: -1.0, beta_pen: -1.0}
+sub2:
+  eps: 1.0e-4
+  max_iter: 150               # lower (e.g. 40) for faster training, see README
+  patience: 5
+  bisect_iters: 40
+  b_min_mhz: 1.0e-3
+  lam0: 1.0e-2
+  step_lambda: 2.0e-4
+  step_delta: 20.0
+ga: {pop: 50, gens: 100, tournament: 3, p_cross: 0.8, p_mut: 0.05, penalty: 5.0}
+ppo:
+  lr: 1.0e-4
+  gamma: 0.99
+  clip: 0.2
+  passes: 10
+  minibatch: 64
+  entropy_coef: 0.01          # assumption, not in paper
+  adv_norm: true              # assumption
+  paper_buffer: false
+  epochs: 600
+ddpg:
+  lr: 1.0e-4
+  gamma: 0.99
+  tau_soft: 0.005
+  buffer: 100000
+  batch: 64
+  noise_std: 0.2
+  predictive: false           # ddpg_predictive toggle
+  epochs: 600
