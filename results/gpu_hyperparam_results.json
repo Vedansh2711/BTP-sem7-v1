@@ -1,0 +1,82 @@
+[
+  {
+    "name": "Strict Security",
+    "params": {
+      "name": "Strict Security",
+      "consensus_thresh": 3.5,
+      "outlier_thresh": 5.0,
+      "eta_penalty": 0.35,
+      "eta_reward": 0.03,
+      "quarantine_thresh": 0.3
+    },
+    "amwaoi": 8.162222222222223,
+    "rmse": 193.3938157193367,
+    "frr": 0.044363292080881855,
+    "far": 0.6956521739130435,
+    "utility": 2.4428488920543088
+  },
+  {
+    "name": "Balanced Standard",
+    "params": {
+      "name": "Balanced Standard",
+      "consensus_thresh": 5.0,
+      "outlier_thresh": 8.0,
+      "eta_penalty": 0.25,
+      "eta_reward": 0.05,
+      "quarantine_thresh": 0.25
+    },
+    "amwaoi": 8.162222222222223,
+    "rmse": 193.3938182374359,
+    "frr": 0.03952120105498073,
+    "far": 0.7536231884057972,
+    "utility": 2.3183782920685654
+  },
+  {
+    "name": "High Freshness",
+    "params": {
+      "name": "High Freshness",
+      "consensus_thresh": 6.5,
+      "outlier_thresh": 10.0,
+      "eta_penalty": 0.2,
+      "eta_reward": 0.08,
+      "quarantine_thresh": 0.2
+    },
+    "amwaoi": 8.162222222222223,
+    "rmse": 193.39381823598697,
+    "frr": 0.03799621288970041,
+    "far": 0.7681159420289855,
+    "utility": 2.2896297031391524
+  },
+  {
+    "name": "Fast Quarantine",
+    "params": {
+      "name": "Fast Quarantine",
+      "consensus_thresh": 4.5,
+      "outlier_thresh": 7.0,
+      "eta_penalty": 0.4,
+      "eta_reward": 0.04,
+      "quarantine_thresh": 0.32
+    },
+    "amwaoi": 8.162222222222223,
+    "rmse": 193.39381622250116,
+    "frr": 0.044363292080881855,
+    "far": 0.7101449275362318,
+    "utility": 2.4087376897302732
+  },
+  {
+    "name": "Noise Tolerant",
+    "params": {
+      "name": "Noise Tolerant",
+      "consensus_thresh": 7.0,
+      "outlier_thresh": 12.0,
+      "eta_penalty": 0.18,
+      "eta_reward": 0.06,
+      "quarantine_thresh": 0.22
+    },
+    "amwaoi": 8.162222222222223,
+    "rmse": 193.39382364847665,
+    "frr": 0.03530804084668966,
+    "far": 0.8695652173913043,
+    "utility": 2.0979335719679746
+  }
+]

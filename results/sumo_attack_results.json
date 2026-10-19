@@ -1,0 +1,22 @@
+{
+  "base_no_defense": {
+    "use_defense": false,
+    "amwaoi": 8.235,
+    "dt_rmse": 135.22038588820553,
+    "frr": 0.0,
+    "far": 1.0,
+    "h_trust": 1.0,
+    "m_trust": 1.0,
+    "avg_step_ms": 3.5676710901134356
+  },
+  "proposed_defense": {
+    "use_defense": true,
+    "amwaoi": 19.64,
+    "dt_rmse": 315.49410997766813,
+    "frr": 0.39601769911504425,
+    "far": 0.23076923076923078,
+    "h_trust": 0.6186836001139929,
+    "m_trust": 0.19017333984374998,
+    "avg_step_ms": 3.6354149199723906
+  }
+}
