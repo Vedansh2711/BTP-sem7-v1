@@ -184,47 +184,36 @@ class FalseCPMResistance:
 
         positions = np.array([r.reported_pos for r in accepted_reports])
 
-        # Single reporter → no consensus possible, return with lower confidence
+        # Single reporter → confidence scales with reporter's historical trust
         if len(accepted_reports) < self.cfg.min_reporters:
             r = accepted_reports[0]
-            return r.reported_pos, 0.3, [r.reporter_id]
+            ts = self._ensure_trust(r.reporter_id)
+            conf = 0.85 * ts.trust if not ts.quarantined else 0.1
+            return r.reported_pos, conf, [r.reporter_id]
 
-        # Consensus test: mean pairwise distance
+        # Multi-reporter Medoid Consensus (immune to minority attacker pulling)
         n = len(positions)
-        pairwise_sum = 0.0
-        count = 0
-        for i in range(n):
-            for j in range(i + 1, n):
-                pairwise_sum += abs(positions[i] - positions[j])
-                count += 1
-        mean_pairwise = pairwise_sum / max(count, 1)
-
-        if mean_pairwise > self.cfg.consensus_thresh:
-            # Consensus fails — group disagrees too much
-            # Fall back to trust-weighted median and reject outliers
-            pass
-
-        # Compute trust-weighted median
         trusts = np.array([self._ensure_trust(r.reporter_id).trust for r in accepted_reports])
-        trusts = np.maximum(trusts, 0.01)  # avoid zero weights
-        
-        # Weighted median: sort by position, pick where cumulative weight crosses 50%
-        order = np.argsort(positions)
-        sorted_pos = positions[order]
-        sorted_w = trusts[order]
-        cum_w = np.cumsum(sorted_w) / sorted_w.sum()
-        median_idx = np.searchsorted(cum_w, 0.5)
-        median_idx = min(median_idx, len(sorted_pos) - 1)
-        weighted_median = sorted_pos[median_idx]
+        trusts = np.maximum(trusts, 0.05)
 
-        # Reject individual outliers
+        # Count inlier support for each report candidate
+        inlier_scores = np.zeros(n)
+        for i in range(n):
+            for j in range(n):
+                if abs(positions[i] - positions[j]) <= self.cfg.consensus_thresh:
+                    inlier_scores[i] += trusts[j]
+
+        best_medoid = int(np.argmax(inlier_scores))
+        ref_pos = positions[best_medoid]
+
+        # Separate consensus inliers from outliers relative to medoid
         accepted = []
         accepted_positions = []
         accepted_trusts = []
         rejected_ids = []
 
         for i, r in enumerate(accepted_reports):
-            if abs(r.reported_pos - weighted_median) <= self.cfg.outlier_thresh:
+            if abs(r.reported_pos - ref_pos) <= self.cfg.outlier_thresh:
                 accepted.append(r)
                 accepted_positions.append(r.reported_pos)
                 accepted_trusts.append(trusts[i])
@@ -232,21 +221,22 @@ class FalseCPMResistance:
                 rejected_ids.append(r.reporter_id)
 
         if len(accepted) == 0:
-            # All rejected — use the one closest to median
-            closest = min(accepted_reports, key=lambda r: abs(r.reported_pos - weighted_median))
-            return closest.reported_pos, 0.1, [closest.reporter_id]
+            closest = min(accepted_reports, key=lambda r: abs(r.reported_pos - ref_pos))
+            return closest.reported_pos, 0.2, [closest.reporter_id]
 
-        # Trust-weighted average of accepted reports
+        # Trust-weighted average of accepted consensus reports
         accepted_positions = np.array(accepted_positions)
         accepted_trusts = np.array(accepted_trusts)
-        fused_pos = np.average(accepted_positions, weights=accepted_trusts)
+        fused_pos = float(np.average(accepted_positions, weights=accepted_trusts))
 
-        # Fusion confidence: higher with more agreeing reporters
+        # Fusion confidence is high when multiple verified reporters agree
         n_accepted = len(accepted)
         n_total = len(accepted_reports)
-        fusion_conf = min(1.0, n_accepted / max(self.cfg.min_reporters, 1)) * (1.0 - 0.3 * (n_total - n_accepted) / max(n_total, 1))
+        fusion_conf = min(1.0, 0.7 + 0.3 * (n_accepted / max(self.cfg.min_reporters, 1)))
+        if n_total > n_accepted:
+            fusion_conf *= (1.0 - 0.2 * (n_total - n_accepted) / n_total)
 
-        return fused_pos, fusion_conf, [r.reporter_id for r in accepted]
+        return fused_pos, float(np.clip(fusion_conf, 0.1, 1.0)), [r.reporter_id for r in accepted]
 
     # ───────────────────────────────────────────────── Layer C
     def layer_c_update(self, icv_id: int, passed: bool, slot_t: int):
@@ -271,17 +261,18 @@ class FalseCPMResistance:
             ts.trust = (1 - self.cfg.eta_penalty) * ts.trust + self.cfg.eta_penalty * 0.0
             ts.n_fail += 1
             ts.fail_streak += 1
-            # Quarantine check
-            if ts.trust < self.cfg.quarantine_thresh:
+            # Quarantine requires sustained failure streak (>= 2) or critically low trust
+            if (ts.trust < self.cfg.quarantine_thresh and ts.fail_streak >= 2) or (ts.trust < 0.15):
                 ts.quarantined = True
 
     def decay_absent(self, active_icv_ids: set, slot_t: int):
-        """Decay trust of ICVs that did NOT send any CPM this slot."""
+        """Only decay trust if an ICV has been dormant/absent for > 30 consecutive slots."""
         if not self.cfg.enable_layer_c:
             return
         for icv_id, ts in self.trust_states.items():
-            if icv_id not in active_icv_ids and ts.last_seen < slot_t:
-                ts.trust = (1 - self.cfg.decay_rate) * ts.trust + self.cfg.decay_rate * 0.5
+            if icv_id not in active_icv_ids and (slot_t - ts.last_seen > 30) and not ts.quarantined:
+                ts.trust = (1 - self.cfg.decay_rate) * ts.trust + self.cfg.decay_rate * 0.8
+
 
     # ───────────────────────────────────────────────── Main Pipeline
     def process_slot(
@@ -438,6 +429,21 @@ class FalseCPMResistance:
                 w_u[i] *= th.fusion_confidence
 
         return np.maximum(w_v, 1e-6), np.maximum(w_u, 1e-6)
+
+    def get_vetted_perceived_size(self, Z: np.ndarray, base_w: np.ndarray,
+                                  nic_idx: np.ndarray, icv_idx: np.ndarray) -> np.ndarray:
+        """
+        Calculates total vetted perceived data size [Mb] delivered to each N-ICV.
+        Excludes quarantined ICVs, but uses actual physical data rates (not artificial trust discounts)
+        to evaluate Constraint C6 satisfaction (W_u >= s_req).
+        """
+        U, V = Z.shape
+        W = np.zeros(U)
+        for j, icv_gid in enumerate(icv_idx):
+            ts = self._ensure_trust(icv_gid)
+            if not ts.quarantined:
+                W += Z[:, j] * base_w[:, j]
+        return W
 
     def get_trust_obs_vector(self, N: int, icv_mask: np.ndarray) -> np.ndarray:
         """
