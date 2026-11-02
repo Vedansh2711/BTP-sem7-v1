@@ -56,7 +56,7 @@ class AttackInjector:
         self.attack_type.clear()
 
         n = len(icv_indices)
-        n_mal = max(1, int(self.p_mal * n)) if self.p_mal > 0 else 0
+        n_mal = int(round(self.p_mal * n)) if self.p_mal > 0 else 0
         if n_mal == 0:
             return
 

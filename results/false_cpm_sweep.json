@@ -1,56 +1,26 @@
 {
   "BASE (no defence)": {
     "0.0": {
-      "amwaoi": 4.742,
-      "dt_rmse": 201.2301803983803,
+      "amwaoi": 5.161999999999999,
+      "dt_rmse": 1.3286581980579587e-14,
       "false_rejection_rate": 0.0,
       "false_acceptance_rate": 0.0,
       "layer_a_rejected": 0.0,
       "quarantined": 0.0
     },
-    "0.05": {
-      "amwaoi": 5.562666666666667,
-      "dt_rmse": 281.7541581898458,
+    "0.125": {
+      "amwaoi": 6.593999999999999,
+      "dt_rmse": 13.811966762108062,
       "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
+      "false_acceptance_rate": 0.4,
       "layer_a_rejected": 0.0,
       "quarantined": 0.0,
       "honest_trust": 1.0,
       "malicious_trust": 1.0
     },
-    "0.1": {
-      "amwaoi": 5.562666666666667,
-      "dt_rmse": 281.7541581898458,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 0.0,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.15": {
-      "amwaoi": 5.562666666666667,
-      "dt_rmse": 281.7541581898458,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 0.0,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.2": {
-      "amwaoi": 5.562666666666667,
-      "dt_rmse": 281.7541581898458,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 0.0,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.3": {
-      "amwaoi": 6.245333333333334,
-      "dt_rmse": 304.94114362105176,
+    "0.25": {
+      "amwaoi": 7.119333333333333,
+      "dt_rmse": 106.00738628208572,
       "false_rejection_rate": 0.0,
       "false_acceptance_rate": 1.0,
       "layer_a_rejected": 0.0,
@@ -58,152 +28,22 @@
       "honest_trust": 1.0,
       "malicious_trust": 1.0
     },
-    "0.4": {
-      "amwaoi": 7.105333333333332,
-      "dt_rmse": 308.43280188138044,
+    "0.375": {
+      "amwaoi": 7.968000000000001,
+      "dt_rmse": 67.22263082935919,
       "false_rejection_rate": 0.0,
       "false_acceptance_rate": 1.0,
       "layer_a_rejected": 0.0,
       "quarantined": 0.0,
       "honest_trust": 1.0,
       "malicious_trust": 1.0
-    }
-  },
-  "BASE + Layer A": {
-    "0.0": {
-      "amwaoi": 9.360000000000001,
-      "dt_rmse": 307.8207897568033,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.0,
-      "layer_a_rejected": 118.4,
-      "quarantined": 0.0
     },
-    "0.05": {
-      "amwaoi": 15.650666666666666,
-      "dt_rmse": 401.73949806955653,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 170.0,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.1": {
-      "amwaoi": 15.650666666666666,
-      "dt_rmse": 401.73949806955653,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 170.0,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.15": {
-      "amwaoi": 15.650666666666666,
-      "dt_rmse": 401.73949806955653,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 170.0,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.2": {
-      "amwaoi": 15.650666666666666,
-      "dt_rmse": 401.73949806955653,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 170.0,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.3": {
-      "amwaoi": 10.099333333333334,
-      "dt_rmse": 433.7144151440745,
+    "0.5": {
+      "amwaoi": 6.367333333333333,
+      "dt_rmse": 120.29061800857555,
       "false_rejection_rate": 0.0,
       "false_acceptance_rate": 1.0,
-      "layer_a_rejected": 228.2,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.4": {
-      "amwaoi": 11.678666666666667,
-      "dt_rmse": 428.229317430029,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 1.0,
-      "layer_a_rejected": 164.6,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    }
-  },
-  "BASE + A + B": {
-    "0.0": {
-      "amwaoi": 9.622666666666666,
-      "dt_rmse": 307.8207897568033,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.0,
-      "layer_a_rejected": 118.4,
-      "quarantined": 0.0
-    },
-    "0.05": {
-      "amwaoi": 15.685333333333332,
-      "dt_rmse": 395.54867522437036,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 160.6,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.1": {
-      "amwaoi": 15.685333333333332,
-      "dt_rmse": 395.54867522437036,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 160.6,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.15": {
-      "amwaoi": 15.685333333333332,
-      "dt_rmse": 395.54867522437036,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 160.6,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.2": {
-      "amwaoi": 15.685333333333332,
-      "dt_rmse": 395.54867522437036,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 0.8,
-      "layer_a_rejected": 160.6,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.3": {
-      "amwaoi": 10.119333333333334,
-      "dt_rmse": 387.6713234043692,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 1.0,
-      "layer_a_rejected": 107.6,
-      "quarantined": 0.0,
-      "honest_trust": 1.0,
-      "malicious_trust": 1.0
-    },
-    "0.4": {
-      "amwaoi": 10.945333333333334,
-      "dt_rmse": 357.02993427555293,
-      "false_rejection_rate": 0.0,
-      "false_acceptance_rate": 1.0,
-      "layer_a_rejected": 100.4,
+      "layer_a_rejected": 0.0,
       "quarantined": 0.0,
       "honest_trust": 1.0,
       "malicious_trust": 1.0
@@ -211,72 +51,52 @@
   },
   "FULL (A + B + C)": {
     "0.0": {
-      "amwaoi": 16.913333333333334,
-      "dt_rmse": 401.6483174440226,
-      "false_rejection_rate": 0.2073239952519562,
+      "amwaoi": 5.167999999999999,
+      "dt_rmse": 3.324012194391806e-14,
+      "false_rejection_rate": 0.0,
       "false_acceptance_rate": 0.0,
-      "layer_a_rejected": 230.2,
-      "quarantined": 4.4
+      "layer_a_rejected": 0.0,
+      "quarantined": 0.0
     },
-    "0.05": {
-      "amwaoi": 17.988666666666667,
-      "dt_rmse": 471.66814007330487,
-      "false_rejection_rate": 0.2772557671197845,
-      "false_acceptance_rate": 0.23655032942704174,
-      "layer_a_rejected": 292.0,
-      "quarantined": 3.8,
-      "honest_trust": 0.6475755606999248,
-      "malicious_trust": 0.393418996037315
+    "0.125": {
+      "amwaoi": 6.736,
+      "dt_rmse": 2.5578653209923834,
+      "false_rejection_rate": 0.10243785257705391,
+      "false_acceptance_rate": 0.06102117061021171,
+      "layer_a_rejected": 110.4,
+      "quarantined": 0.8,
+      "honest_trust": 0.9538226305912868,
+      "malicious_trust": 0.6623693388158307
     },
-    "0.1": {
-      "amwaoi": 17.988666666666667,
-      "dt_rmse": 471.66814007330487,
-      "false_rejection_rate": 0.2772557671197845,
-      "false_acceptance_rate": 0.23655032942704174,
-      "layer_a_rejected": 292.0,
-      "quarantined": 3.8,
-      "honest_trust": 0.6475755606999248,
-      "malicious_trust": 0.393418996037315
+    "0.25": {
+      "amwaoi": 9.453999999999999,
+      "dt_rmse": 3.9668849032225983,
+      "false_rejection_rate": 0.1879556701477551,
+      "false_acceptance_rate": 0.2525989118883081,
+      "layer_a_rejected": 278.4,
+      "quarantined": 2.6,
+      "honest_trust": 0.8722855133857674,
+      "malicious_trust": 0.3949331204249406
     },
-    "0.15": {
-      "amwaoi": 17.988666666666667,
-      "dt_rmse": 471.66814007330487,
-      "false_rejection_rate": 0.2772557671197845,
-      "false_acceptance_rate": 0.23655032942704174,
-      "layer_a_rejected": 292.0,
-      "quarantined": 3.8,
-      "honest_trust": 0.6475755606999248,
-      "malicious_trust": 0.393418996037315
+    "0.375": {
+      "amwaoi": 13.828,
+      "dt_rmse": 4.2581115559331595,
+      "false_rejection_rate": 0.2674142678851368,
+      "false_acceptance_rate": 0.22252662847864002,
+      "layer_a_rejected": 320.8,
+      "quarantined": 4.2,
+      "honest_trust": 0.7527170248875381,
+      "malicious_trust": 0.3476522884139134
     },
-    "0.2": {
-      "amwaoi": 17.988666666666667,
-      "dt_rmse": 471.66814007330487,
-      "false_rejection_rate": 0.2772557671197845,
-      "false_acceptance_rate": 0.23655032942704174,
-      "layer_a_rejected": 292.0,
-      "quarantined": 3.8,
-      "honest_trust": 0.6475755606999248,
-      "malicious_trust": 0.393418996037315
-    },
-    "0.3": {
-      "amwaoi": 20.355333333333334,
-      "dt_rmse": 524.5862166597174,
-      "false_rejection_rate": 0.28989419624894464,
-      "false_acceptance_rate": 0.30521833100625445,
-      "layer_a_rejected": 360.8,
-      "quarantined": 4.4,
-      "honest_trust": 0.6185982218124251,
-      "malicious_trust": 0.5152381560026941
-    },
-    "0.4": {
-      "amwaoi": 13.968666666666667,
-      "dt_rmse": 404.0648313983743,
-      "false_rejection_rate": 0.18160021300672302,
-      "false_acceptance_rate": 0.2440475056861504,
-      "layer_a_rejected": 289.0,
-      "quarantined": 4.0,
-      "honest_trust": 0.7128231040830063,
-      "malicious_trust": 0.5032141365064479
+    "0.5": {
+      "amwaoi": 8.032666666666668,
+      "dt_rmse": 37.090654167425726,
+      "false_rejection_rate": 0.0006079027355623101,
+      "false_acceptance_rate": 0.04863227149262965,
+      "layer_a_rejected": 336.8,
+      "quarantined": 3.4,
+      "honest_trust": 0.9926803019327408,
+      "malicious_trust": 0.3497305376881053
     }
   }
 }

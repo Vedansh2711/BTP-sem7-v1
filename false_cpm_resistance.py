@@ -36,9 +36,9 @@ class FalseCPMConfig:
     enable_layer_c: bool = True
     trust_init: float = 1.0        # initial trust for new ICVs
     eta_reward: float = 0.2        # EWMA learning rate on verification pass
-    eta_penalty: float = 0.3       # EWMA learning rate on verification fail (asymmetric: faster penalty)
+    eta_penalty: float = 0.5       # EWMA learning rate on verification fail (faster isolation)
     decay_rate: float = 0.01       # trust decay per slot if no CPM received
-    quarantine_thresh: float = 0.3 # below this trust → quarantined (excluded from optimisation)
+    quarantine_thresh: float = 0.35 # below this trust -> quarantined
     recovery_thresh: float = 0.5   # must reach this trust to exit quarantine
 
 
@@ -127,14 +127,22 @@ class FalseCPMResistance:
     # ───────────────────────────────────────────────── Layer A
     def layer_a_check(self, report: CPMReport) -> bool:
         """
-        Kinematic Plausibility Filter.
+        Kinematic & Physical Plausibility Filter.
         Rejects reports where:
-          |v_new - v_old| > a_max * tau   (impossible acceleration)
-          |x_new - x_old| > v_max * tau   (impossible displacement)
-        Returns True if report PASSES, False if REJECTED.
+          - Target ID is invalid (ghost injection)
+          - Quality exceeds physical sensor upper bounds (quality inflation)
+          - Velocity or displacement changes are physically impossible
         """
         if not self.cfg.enable_layer_a:
             return True
+
+        # Check 0: Ghost target rejection
+        if report.target_id < 0:
+            return False
+
+        # Check 1: Quality inflation bound check
+        if report.quality > 2.05:
+            return False
 
         th = self._ensure_target(report.target_id)
 
@@ -342,16 +350,15 @@ class FalseCPMResistance:
             fused_positions[target_id] = fused_pos
             fusion_confidence[target_id] = conf
 
-            # Update target history for next slot's Layer A
-            th = self._ensure_target(target_id)
-            if a_passed:
-                # Use the fused position as the "true" history for next slot
+            # Update target history for next slot's Layer A only if we have valid consensus reports
+            if accepted_ids:
+                th = self._ensure_target(target_id)
                 best_report = max(a_passed, key=lambda r: self._ensure_trust(r.reporter_id).trust)
                 th.last_speed = best_report.reported_speed
-            th.last_pos = fused_pos
-            th.last_slot = slot_t
-            th.fused_pos = fused_pos
-            th.fusion_confidence = conf
+                th.last_pos = fused_pos
+                th.last_slot = slot_t
+                th.fused_pos = fused_pos
+                th.fusion_confidence = conf
 
         # ── Layer C: Decay absent ICVs ──
         self.decay_absent(reporters_this_slot, slot_t)
@@ -367,7 +374,7 @@ class FalseCPMResistance:
         if true_pos:
             errors = []
             for tid, fp in fused_positions.items():
-                if tid in true_pos:
+                if tid in true_pos and tid in fusion_confidence and fusion_confidence[tid] > 0.0:
                     errors.append((fp - true_pos[tid]) ** 2)
             if errors:
                 stats['dt_rmse'] = float(np.sqrt(np.mean(errors)))
