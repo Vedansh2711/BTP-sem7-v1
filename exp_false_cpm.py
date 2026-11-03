@@ -27,6 +27,7 @@ from sub2_bca import solve_rsu
 from fast_optimal_solvers import fast_spatial_greedy_matching, fast_solve_rsu
 from false_cpm_resistance import FalseCPMResistance, FalseCPMConfig, CPMReport
 from attack_injector import AttackInjector
+from env.mobility import make_mobility
 
 
 def load_config():
@@ -47,7 +48,7 @@ class SecureDTEnv:
         self.defence = defence
         self.injector = injector
         self.rng = np.random.default_rng(seed)
-        self.mob = KinematicMobility(cfg, self.rng)
+        self.mob = make_mobility(cfg, self.rng)
         self.N = self.mob.N
         self.K = cfg['rsu']['K']
         self.tau = cfg['time']['tau']

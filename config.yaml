@@ -4,7 +4,7 @@ road: {length: 2000.0, lanes_per_dir: 2}
 rsu:  {K: 4, centers: [250.0, 750.0, 1250.0, 1750.0], radius: 300.0, height: 10.0, spacing: 500.0}
 time: {T: 150, tau: 1.0}
 mobility:
-  backend: kinematic          # kinematic | sumo (sumo = stub, see ASSUMPTIONS.md)
+  backend: sumo         # kinematic | sumo (sumo = stub, see ASSUMPTIONS.md)
   entry_mean_s: 2.0
   speed_mean: 12.5
   speed_std: 3.3
