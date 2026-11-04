@@ -200,41 +200,30 @@ class FalseCPMResistance:
             return r.reported_pos, conf, [r.reporter_id]
 
         # Multi-reporter Medoid Consensus (immune to minority attacker pulling)
-        n = len(positions)
         trusts = np.array([self._ensure_trust(r.reporter_id).trust for r in accepted_reports])
         trusts = np.maximum(trusts, 0.05)
 
-        # Count inlier support for each report candidate
-        inlier_scores = np.zeros(n)
-        for i in range(n):
-            for j in range(n):
-                if abs(positions[i] - positions[j]) <= self.cfg.consensus_thresh:
-                    inlier_scores[i] += trusts[j]
+        # Count inlier support for each report candidate.
+        # Vectorized form of the pairwise loop; row sums preserve the original
+        # j-increasing accumulation order, so the result is bit-identical.
+        within = np.abs(positions[:, None] - positions[None, :]) <= self.cfg.consensus_thresh
+        inlier_scores = (within * trusts[None, :]).sum(axis=1)
 
         best_medoid = int(np.argmax(inlier_scores))
         ref_pos = positions[best_medoid]
 
         # Separate consensus inliers from outliers relative to medoid
-        accepted = []
-        accepted_positions = []
-        accepted_trusts = []
-        rejected_ids = []
-
-        for i, r in enumerate(accepted_reports):
-            if abs(r.reported_pos - ref_pos) <= self.cfg.outlier_thresh:
-                accepted.append(r)
-                accepted_positions.append(r.reported_pos)
-                accepted_trusts.append(trusts[i])
-            else:
-                rejected_ids.append(r.reporter_id)
+        inlier_mask = np.abs(positions - ref_pos) <= self.cfg.outlier_thresh
+        accepted = [r for i, r in enumerate(accepted_reports) if inlier_mask[i]]
+        rejected_ids = [r.reporter_id for i, r in enumerate(accepted_reports) if not inlier_mask[i]]
 
         if len(accepted) == 0:
             closest = min(accepted_reports, key=lambda r: abs(r.reported_pos - ref_pos))
             return closest.reported_pos, 0.2, [closest.reporter_id]
 
         # Trust-weighted average of accepted consensus reports
-        accepted_positions = np.array(accepted_positions)
-        accepted_trusts = np.array(accepted_trusts)
+        accepted_positions = positions[inlier_mask]
+        accepted_trusts = trusts[inlier_mask]
         fused_pos = float(np.average(accepted_positions, weights=accepted_trusts))
 
         # Fusion confidence is high when multiple verified reporters agree
