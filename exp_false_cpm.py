@@ -4,17 +4,19 @@ Experiment: False CPM Resistance - p_mal Sweep
 Evaluates:
   1. BASE (no defence)
   2. FULL (Layer A + B + C Defence + Fast Optimal Solvers)
-across malicious vehicle fraction p_mal = 0% to 40%.
+across malicious vehicle fraction p_mal = 0% to 50%.
 
 Outputs: DT RMSE, AMWAoI, False Rejection Rate, False Acceptance Rate,
          Honest/Malicious Trust, Quarantine Count.
 
-Solvers:
-  - SPG: Spatial Priority Greedy matching (Subproblem 1)
-  - ED-BCA: Exact 1D Dual Bisection bandwidth allocation (Subproblem 2)
-  - Physical C6 satisfaction via get_vetted_perceived_size()
+Solvers & Architectural Highlights:
+  - SPG: Two-Phase C6-Satisficing Spatial Priority Greedy matching (Subproblem 1)
+  - ED-BCA: Vectorized Bottleneck-Equalizing 1D Dual Bisection (Subproblem 2)
+  - Common Random Numbers (CRN): Dedicated attacker RNG so physical trajectories
+    are identical across p_mal levels and between BASE and FULL.
+  - Proper vehicle respawn lifecycle handling (new, gone = m.step()).
 """
-import sys, os, copy, json
+import sys, os, copy, json, time
 import numpy as np
 
 # Add repo root to path
@@ -27,7 +29,6 @@ from sub2_bca import solve_rsu
 from fast_optimal_solvers import fast_spatial_greedy_matching, fast_solve_rsu
 from false_cpm_resistance import FalseCPMResistance, FalseCPMConfig, CPMReport
 from attack_injector import AttackInjector
-from env.mobility import make_mobility
 
 
 def load_config():
@@ -38,16 +39,18 @@ def load_config():
 
 class SecureDTEnv:
     """
-    Simplified DTEnv that runs the per-slot pipeline WITH the 3-layer defence.
-    Uses MDA (nearest RSU) access selection for simplicity (no torch needed).
-    Utilizes fast optimal solvers (SPG + ED-BCA) and vetted physical C6 satisfaction.
+    DTEnv that runs the per-slot pipeline WITH the 3-layer defence.
+    Utilizes fast optimal solvers (Two-Phase C6-Satisficing SPG + Vectorized ED-BCA)
+    and vetted physical C6 satisfaction.
     """
 
     def __init__(self, cfg, defence: FalseCPMResistance, injector: AttackInjector, seed=0, use_fast_solvers=True):
         self.cfg = cfg
         self.defence = defence
         self.injector = injector
+        self.seed = seed
         self.rng = np.random.default_rng(seed)
+        self.atk_rng = np.random.default_rng(seed + 77777)
         self.mob = make_mobility(cfg, self.rng)
         self.N = self.mob.N
         self.K = cfg['rsu']['K']
@@ -57,7 +60,9 @@ class SecureDTEnv:
 
     def reset(self, seed=None):
         if seed is not None:
+            self.seed = seed
             self.rng = np.random.default_rng(seed)
+            self.atk_rng = np.random.default_rng(seed + 77777)
             self.mob.rng = self.rng
         self.mob.reset()
         self.defence.reset()
@@ -68,9 +73,13 @@ class SecureDTEnv:
         for i in np.flatnonzero(self.mob.active):
             self.dt_loc[i] = int(np.argmin(np.abs(self.mob.pos[i] - self.centers)))
 
-        # Mark malicious ICVs
+        # Mark malicious ICVs using isolated attacker RNG (preserves Common Random Numbers)
         icv_idx = np.flatnonzero(self.mob.active & self.mob.is_icv)
-        self.injector.mark_malicious(icv_idx, self.rng)
+        self.injector.mark_malicious(icv_idx, self.atk_rng)
+
+    def close(self):
+        if hasattr(self.mob, 'close'):
+            self.mob.close()
 
     def run_episode(self, T=None):
         """Run a full episode and collect metrics."""
@@ -91,15 +100,26 @@ class SecureDTEnv:
             'quarantine_hist': [],
             'honest_trust_hist': [],
             'malicious_trust_hist': [],
+            'slot_times_ms': [],
         }
 
+        defence_active = (
+            self.defence.cfg.enable_layer_a
+            or self.defence.cfg.enable_layer_b
+            or self.defence.cfg.enable_layer_c
+        )
+
         for t in range(T):
+            t_slot_start = time.perf_counter()
             m = self.mob
             icv_idx = np.flatnonzero(m.active & m.is_icv)
             nic_idx = np.flatnonzero(m.active & ~m.is_icv)
 
             if icv_idx.size == 0 or nic_idx.size == 0:
-                m.step()
+                new, gone = m.step()
+                self.defence.on_vehicles_respawned(new, gone)
+                for i in new + gone:
+                    self.A[i] = 0.0
                 continue
 
             # ──── Generate CPMs (honest ground truth + attack injection) ────
@@ -115,6 +135,9 @@ class SecureDTEnv:
             # Build CPM reports (one per ICV-NICV candidate pair)
             cpms = {}  # target_id -> list of CPMReport
             ground_truth_pos = {}  # target_id -> true position
+            q_reported = np.zeros_like(q)
+            cand_reported = np.zeros_like(cand, dtype=bool)
+            link_corrupted = np.zeros_like(cand, dtype=bool)
 
             for ui, u_gid in enumerate(nic_idx):
                 ground_truth_pos[int(u_gid)] = float(m.pos[u_gid])
@@ -135,35 +158,45 @@ class SecureDTEnv:
                         timestamp=t
                     )
 
-                    # Attack injection
+                    # Attack injection (using isolated atk_rng)
                     if self.injector.is_malicious(int(v_gid)):
-                        attacked = self.injector.attack(honest, self.rng, m.L)
+                        attacked = self.injector.attack(honest, self.atk_rng, m.L)
                         if attacked is None:
                             # Suppression attack - report was omitted/withheld
                             continue
                         report = attacked
-                        # Genuinely falsified if content was modified (ghost, shift, quality inflation)
-                        # When a suppression attacker occasionally sends honest data, content is truthful
                         is_malicious_report = (attacked is not honest)
                     else:
                         report = honest
                         is_malicious_report = False
 
-                    # Tag for metric tracking (NOT visible to defence)
                     report._is_malicious = is_malicious_report
                     cpms[int(u_gid)].append(report)
+
+                    # Record reported quality for WSMM selection
+                    cand_reported[ui, vi] = True
+                    q_reported[ui, vi] = report.quality
+                    if is_malicious_report:
+                        link_corrupted[ui, vi] = True
 
             # ──── Run the 3-Layer Pipeline ────
             fused_pos, trust_vec, fusion_conf = self.defence.process_slot(
                 t, cpms, true_pos=ground_truth_pos
             )
 
-            # ──── Count false rejections / false acceptances ────
+            # ──── Count false rejections / false acceptances at report level ────
             for target_id, reports in cpms.items():
+                accepted_for_target = self.defence.last_accepted_reports.get(target_id, set())
                 for r in reports:
                     metrics['total_reports'] += 1
-                    reporter_trust = trust_vec.get(r.reporter_id, 1.0)
-                    was_accepted = (reporter_trust >= self.defence.cfg.quarantine_thresh)
+                    if defence_active:
+                        reporter_trust = trust_vec.get(r.reporter_id, 1.0)
+                        was_accepted = (
+                            (r.reporter_id in accepted_for_target)
+                            and (reporter_trust >= self.defence.cfg.quarantine_thresh)
+                        )
+                    else:
+                        was_accepted = True
 
                     if hasattr(r, '_is_malicious'):
                         if r._is_malicious:
@@ -177,18 +210,32 @@ class SecureDTEnv:
                             else:
                                 metrics['false_rejections'] += 1
 
-            # ──── Modify WSMM weights with trust ────
-            w = q * m.s_unit[icv_idx][None, :] * self.tau
-            cand_secure = cand.copy()
+            # ──── Modify WSMM weights with trust & filter rejected reports ────
+            w_true = q * m.s_unit[icv_idx][None, :] * self.tau
+            if defence_active:
+                # Only reports accepted by Layer A/B can be selected
+                cand_secure = cand_reported.copy()
+                for ui, u_gid in enumerate(nic_idx):
+                    acc_set = self.defence.last_accepted_reports.get(int(u_gid), set())
+                    for vi, v_gid in enumerate(icv_idx):
+                        if int(v_gid) not in acc_set:
+                            cand_secure[ui, vi] = False
+                w_base = q * m.s_unit[icv_idx][None, :] * self.tau * cand_secure
+                w_secure = self.defence.get_wsmm_weights(w_base, cand_secure, nic_idx, icv_idx)
+            else:
+                # Without defence, system blindly trusts reported qualities (vulnerable to quality inflation)
+                cand_secure = cand_reported.copy()
+                w_secure = q_reported * m.s_unit[icv_idx][None, :] * self.tau * cand_secure
 
-            # Apply trust to selection weights
-            w_secure = self.defence.get_wsmm_weights(w, cand_secure, nic_idx, icv_idx)
-
-            # Run Subproblem 1 Matching (using Fast SPG solver or baseline MCMF)
+            # Run Subproblem 1 Matching (using Fast Two-Phase C6-Satisficing SPG or baseline MCMF)
             if self.use_fast_solvers:
-                Zs = fast_spatial_greedy_matching(cand_secure, w_secure, pc['phi_max'],
-                                                   nic_pos=m.pos[nic_idx], icv_pos=m.pos[icv_idx],
-                                                   r_sense=pc['r_sense'], road_length=m.L)
+                Zs = fast_spatial_greedy_matching(
+                    cand_secure, w_secure, pc['phi_max'],
+                    nic_pos=m.pos[nic_idx], icv_pos=m.pos[icv_idx],
+                    r_sense=pc['r_sense'], road_length=m.L,
+                    s_req=pc['s_req'] if defence_active else None,
+                    nic_urgency=self.A[nic_idx] + 1.0
+                )
             else:
                 Zs = sub1_wsmm.select('wsmm', cand_secure, w_secure, pc['phi_max'],
                                        pc['s_req'], self.rng) if icv_idx.size and nic_idx.size \
@@ -202,11 +249,12 @@ class SecureDTEnv:
             sel_flag = np.zeros(self.N, bool)
             sel_flag[icv_idx] = Zs.sum(0) > 0 if icv_idx.size else False
 
-            # Vetted perceived data size for constraint C6 (excluding quarantined nodes)
-            # Uses actual physical perception data rate (w), NOT artificial trust discounts
+            # Vetted perceived data size for constraint C6:
+            # Only uncorrupted, non-quarantined physical data counts toward valid DT state synchronization
             W_vetted = np.zeros(self.N)
             if nic_idx.size and icv_idx.size:
-                W_vetted[nic_idx] = self.defence.get_vetted_perceived_size(Zs, w, nic_idx, icv_idx)
+                uncorrupted_w = w_true * (~link_corrupted)
+                W_vetted[nic_idx] = self.defence.get_vetted_perceived_size(Zs, uncorrupted_w, nic_idx, icv_idx)
 
             s_v = m.s_own + m.s_unit * sel_flag
             c_cp = (Z_full * (m.c_unit * m.s_unit)[None, :]).sum(1)
@@ -224,7 +272,7 @@ class SecureDTEnv:
                 if sel.size and sx[sel[0]] >= 0:
                     sx[u] = sx[sel[0]]
 
-            # Constraint C6: Satisfied if vetted perceived data >= s_req
+            # Constraint C6: Satisfied if vetted uncorrupted perceived data >= s_req
             c6_ok = np.zeros(self.N, bool)
             c6_ok[nic_idx] = W_vetted[nic_idx] >= (pc['s_req'] - 1e-9)
 
@@ -318,22 +366,23 @@ class SecureDTEnv:
                 metrics['layer_a_rejected'] += s['layer_a_rejected']
                 metrics['layer_b_outliers'] += s['layer_b_outliers']
 
-            # Advance mobility
-            m.step()
-            # Re-mark malicious after new vehicles enter
-            new_icv = np.flatnonzero(m.active & m.is_icv)
-            for v in new_icv:
-                if int(v) not in self.injector.malicious_set and int(v) not in self.defence.trust_states:
-                    if self.rng.random() < self.injector.p_mal:
-                        self.injector.malicious_set.add(int(v))
-                        attack_types = list(self.injector.attack_mix.keys())
-                        self.injector.attack_type[int(v)] = self.rng.choice(attack_types)
+            metrics['slot_times_ms'].append((time.perf_counter() - t_slot_start) * 1000.0)
+
+            # Advance mobility and reset respawned vehicle tracks
+            new, gone = m.step()
+            self.defence.on_vehicles_respawned(new, gone)
+            for i in new:
+                self.A[i] = 0.0
+                self.dt_loc[i] = int(np.argmin(np.abs(m.pos[i] - self.centers)))
+            for i in gone:
+                self.A[i] = 0.0
 
         # Final summary
         metrics['amwaoi'] = float(np.mean(metrics['omega_hist']))
         metrics['dt_rmse'] = float(np.mean(metrics['dt_rmse_hist'])) if metrics['dt_rmse_hist'] else 0.0
         metrics['false_rejection_rate'] = metrics['false_rejections'] / max(metrics['true_acceptances'] + metrics['false_rejections'], 1)
         metrics['false_acceptance_rate'] = metrics['false_acceptances'] / max(metrics['true_rejections'] + metrics['false_acceptances'], 1)
+        metrics['mean_slot_ms'] = float(np.mean(metrics['slot_times_ms'])) if metrics['slot_times_ms'] else 0.0
 
         if metrics['honest_trust_hist']:
             metrics['final_honest_trust'] = metrics['honest_trust_hist'][-1]
@@ -347,7 +396,7 @@ def run_sweep():
     cfg = load_config()
 
     p_mal_values = [0.0, 0.125, 0.25, 0.375, 0.50]
-    
+
     configs = {
         'BASE (no defence)':     FalseCPMConfig(enable_layer_a=False, enable_layer_b=False, enable_layer_c=False),
         'FULL (A + B + C)':      FalseCPMConfig(enable_layer_a=True,  enable_layer_b=True,  enable_layer_c=True),
@@ -360,10 +409,11 @@ def run_sweep():
     print("FALSE CPM RESISTANCE - p_mal SWEEP EXPERIMENT (OPTIMIZED)")
     print("=" * 80)
     print(f"Configurations: {list(configs.keys())}")
+    print(f"Mobility Backend: {cfg['mobility']['backend'].upper()}")
     print(f"p_mal values: {p_mal_values}")
     print(f"Runs per config per p_mal: {n_runs}")
     print(f"Episode length: {cfg['time']['T']} slots")
-    print(f"Fast Solvers (SPG + ED-BCA): ENABLED")
+    print(f"Fast Solvers (Two-Phase SPG + Vectorized ED-BCA): ENABLED")
     print("=" * 80)
 
     for config_name, fcpm_cfg in configs.items():
@@ -374,9 +424,12 @@ def run_sweep():
                 defence = FalseCPMResistance(fcpm_cfg)
                 injector = AttackInjector(p_mal=p_mal)
                 env = SecureDTEnv(cfg, defence, injector, seed=seed * 100 + 42, use_fast_solvers=True)
-                env.reset(seed=seed * 100 + 42)
-                m = env.run_episode()
-                run_metrics.append(m)
+                try:
+                    env.reset(seed=seed * 100 + 42)
+                    m = env.run_episode()
+                    run_metrics.append(m)
+                finally:
+                    env.close()
 
             # Average over runs
             avg = {
@@ -386,6 +439,7 @@ def run_sweep():
                 'false_acceptance_rate': float(np.mean([m['false_acceptance_rate'] for m in run_metrics])),
                 'layer_a_rejected': float(np.mean([m['layer_a_rejected'] for m in run_metrics])),
                 'quarantined': float(np.mean([m['quarantine_hist'][-1] if m['quarantine_hist'] else 0 for m in run_metrics])),
+                'mean_slot_ms': float(np.mean([m['mean_slot_ms'] for m in run_metrics])),
             }
 
             # Trust scores (only valid when p_mal > 0)
@@ -403,7 +457,8 @@ def run_sweep():
                   f"| RMSE={avg['dt_rmse']:.2f}m "
                   f"| FRR={avg['false_rejection_rate']:.1%} "
                   f"| FAR={avg['false_acceptance_rate']:.1%} "
-                  f"| Q={avg['quarantined']:.0f}")
+                  f"| Q={avg['quarantined']:.1f} "
+                  f"| {avg['mean_slot_ms']:.2f}ms/slot")
 
         print()
 
@@ -422,7 +477,7 @@ def run_sweep():
             ht = f"{r.get('honest_trust', 0):.3f}" if p_mal > 0 else "  n/a"
             mt = f"{r.get('malicious_trust', 0):.3f}" if p_mal > 0 else "  n/a"
             print(f"{config_name:20s} | {p_mal:5.1%}  | {r['amwaoi']:7.2f} | {r['dt_rmse']:6.2f} | "
-                  f"{r['false_rejection_rate']:5.1%}  | {r['false_acceptance_rate']:5.1%}  | {ht:>7s} | {mt:>7s} | {r['quarantined']:4.0f}")
+                  f"{r['false_rejection_rate']:5.1%}  | {r['false_acceptance_rate']:5.1%}  | {ht:>7s} | {mt:>7s} | {r['quarantined']:4.1f}")
         print("-" * len(header))
 
     # Save results
@@ -444,6 +499,7 @@ def run_sweep():
         print(f"  BASE AMWAoI:  {base['amwaoi']:.2f}s  -> FULL AMWAoI:  {full['amwaoi']:.2f}s")
         print(f"  BASE RMSE:    {base['dt_rmse']:.2f}m -> FULL RMSE:    {full['dt_rmse']:.2f}m")
         print(f"  BASE FAR:     {base['false_acceptance_rate']:.1%} -> FULL FAR:     {full['false_acceptance_rate']:.1%}")
+        print(f"  FULL FRR:     {full['false_rejection_rate']:.1%}")
         print(f"  Honest ICV Trust:    {full.get('honest_trust', 0):.3f} (maintained)")
         print(f"  Malicious ICV Trust: {full.get('malicious_trust', 0):.3f} (quarantined)")
 

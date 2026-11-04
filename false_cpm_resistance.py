@@ -1,9 +1,15 @@
 """
 False CPM Resistance: Three-Layer Defence Pipeline
 ===================================================
-Layer A: Kinematic Plausibility Filter  — rejects physically impossible single-step reports
-Layer B: Cross-Validation & Fusion     — multi-ICV consensus + trust-weighted median fusion
-Layer C: Trust Management & Quarantine — long-term EWMA trust score, quarantine repeat offenders
+Layer A: Second-Order Kinematic & Physical Plausibility Filter
+         — Rejects ghost IDs, inflated quality, out-of-envelope speeds,
+           target dead-reckoning violations, and per-reporter self-kinematic violations.
+Layer B: Cross-Validation & Temporal-Anchored Medoid Fusion
+         — Joint (position, speed) consensus + temporal trajectory verification
+           + epistemic abstention on unverified first-slot disagreements.
+Layer C: Trust Management & Quarantine
+         — Asymmetric EWMA trust score, rapid quarantine of repeat offenders,
+           and vetted physical C6 perception accounting.
 
 This module is MODULAR: each layer can be toggled independently for ablation experiments.
 It sits between CPM reception and the WSMM/BCA/ASDMM algorithms.
@@ -22,22 +28,23 @@ class FalseCPMConfig:
     """All tuneable parameters for the three-layer pipeline."""
     # Layer A: Kinematic Plausibility
     enable_layer_a: bool = True
-    a_max: float = 10.0            # m/s² — max physically plausible acceleration
-    v_max: float = 50.0            # m/s  — max physically plausible speed (180 km/h)
+    a_max: float = 5.0             # m/s² — max physically plausible highway accel/decel (4.5 + margin)
+    v_max: float = 17.2            # m/s  — max physically plausible highway speed (16.7 + margin)
     tau: float = 1.0               # s    — slot duration (matches config.yaml time.tau)
 
     # Layer B: Cross-Validation & Fusion
     enable_layer_b: bool = True
-    consensus_thresh: float = 5.0  # m — max acceptable mean pairwise position disagreement
-    outlier_thresh: float = 8.0    # m — individual report vs trust-weighted median
-    min_reporters: int = 2         # minimum ICVs required for consensus
+    consensus_thresh: float = 5.0  # m   — max acceptable pairwise position disagreement
+    speed_consensus_thresh: float = 3.0  # m/s — max acceptable pairwise speed disagreement
+    outlier_thresh: float = 8.0    # m   — individual report vs medoid reference
+    min_reporters: int = 2         # minimum ICVs required for multi-reporter consensus
 
     # Layer C: Trust & Quarantine
     enable_layer_c: bool = True
     trust_init: float = 1.0        # initial trust for new ICVs
     eta_reward: float = 0.2        # EWMA learning rate on verification pass
     eta_penalty: float = 0.5       # EWMA learning rate on verification fail (faster isolation)
-    decay_rate: float = 0.01       # trust decay per slot if no CPM received
+    decay_rate: float = 0.01       # trust decay per slot if dormant > 30 slots
     quarantine_thresh: float = 0.35 # below this trust -> quarantined
     recovery_thresh: float = 0.5   # must reach this trust to exit quarantine
 
@@ -85,34 +92,43 @@ class TargetHistory:
 
 class FalseCPMResistance:
     """
-    Sits between CPM reception and the base algorithms (WSMM, BCA, ASDMM).
-    
-    Usage in dt_env.py:
-        defence = FalseCPMResistance(cfg)
-        
-        # In _prepare_slot(), after collecting CPMs:
-        vetted_reports, trust_vec, fusion_conf = defence.process_slot(
-            slot_t, cpms, mob
-        )
-        
-        # Then pass trust_vec into WSMM weight computation:
-        #   w = q * s_unit * tau * trust[reporter]    (zero if quarantined)
-        #
-        # And fusion_conf into BCA weight computation:
-        #   w_u = (A_u + 1) * fusion_conf[u]          (for N-ICVs)
+    Sits between CPM reception and the base algorithms (WSMM/SPG, BCA/ED-BCA, ASDMM).
     """
 
     def __init__(self, fcpm_cfg: FalseCPMConfig = None):
         self.cfg = fcpm_cfg or FalseCPMConfig()
-        self.trust_states: Dict[int, ICVTrustState] = {}     # ICV id → trust state
-        self.target_history: Dict[int, TargetHistory] = {}   # N-ICV id → history
+        self.trust_states: Dict[int, ICVTrustState] = {}     # ICV id -> trust state
+        self.target_history: Dict[int, TargetHistory] = {}   # N-ICV id -> history
+        # Per-(reporter_id, target_id) last report for self-kinematic consistency
+        self.reporter_history: Dict[Tuple[int, int], Tuple[float, float, int]] = {}
+        # Set of (reporter_id, target_id) pairs verified across >= 2 consecutive slots
+        self.temporally_verified: set = set()
         self.slot_stats: List[dict] = []                      # per-slot statistics
+        self.last_accepted_reports: Dict[int, set] = {}       # target_id -> set of accepted reporter_ids
 
     def reset(self):
         """Call at episode reset."""
         self.trust_states.clear()
         self.target_history.clear()
+        self.reporter_history.clear()
+        self.temporally_verified.clear()
         self.slot_stats.clear()
+        self.last_accepted_reports.clear()
+
+    def on_vehicles_respawned(self, new_indices, gone_indices):
+        """
+        Clear kinematic history for target slots that exited the road or respawned,
+        preventing a newly spawned vehicle from being compared against an exited vehicle.
+        """
+        reset_set = set(int(i) for i in new_indices) | set(int(i) for i in gone_indices)
+        if not reset_set:
+            return
+        for tid in reset_set:
+            self.target_history.pop(tid, None)
+        stale_keys = [k for k in self.reporter_history if k[1] in reset_set or k[0] in reset_set]
+        for k in stale_keys:
+            self.reporter_history.pop(k, None)
+            self.temporally_verified.discard(k)
 
     def _ensure_trust(self, icv_id: int) -> ICVTrustState:
         if icv_id not in self.trust_states:
@@ -127,11 +143,13 @@ class FalseCPMResistance:
     # ───────────────────────────────────────────────── Layer A
     def layer_a_check(self, report: CPMReport) -> bool:
         """
-        Kinematic & Physical Plausibility Filter.
+        Second-Order Kinematic & Physical Plausibility Filter.
         Rejects reports where:
-          - Target ID is invalid (ghost injection)
-          - Quality exceeds physical sensor upper bounds (quality inflation)
-          - Velocity or displacement changes are physically impossible
+          0. Target ID is invalid (ghost injection: target_id < 0)
+          1. Quality exceeds physical sensor bounds (quality inflation: quality > 2.05)
+          2. Reported speed violates physical highway speed envelope
+          3. Per-reporter consecutive reports for the same target violate self-kinematics
+          4. Target dead-reckoning (displacement vs speed) or acceleration is violated
         """
         if not self.cfg.enable_layer_a:
             return True
@@ -141,99 +159,167 @@ class FalseCPMResistance:
             return False
 
         # Check 1: Quality inflation bound check
-        if report.quality > 2.05:
+        if report.quality > 2.05 or report.quality < 0.0:
             return False
 
+        # Check 2: Physical highway speed envelope check
+        eff_vmax = min(self.cfg.v_max, 17.2)
+        if report.reported_speed < 0.0 or report.reported_speed > eff_vmax:
+            return False
+
+        eff_amax = min(self.cfg.a_max, 5.0)
+
+        # Check 3: Per-(reporter, target) self-kinematic consistency
+        r_key = (report.reporter_id, report.target_id)
+        prev_rep = self.reporter_history.get(r_key)
+        if prev_rep is not None:
+            p_pos, p_spd, p_slot = prev_rep
+            dt_r = (report.timestamp - p_slot) * self.cfg.tau
+            if 0.0 < dt_r <= 2.5 * self.cfg.tau:
+                dx_r = abs(report.reported_pos - p_pos)
+                if dx_r <= 800.0:  # not a road-end wrap-around
+                    dv_r = abs(report.reported_speed - p_spd)
+                    if dv_r > eff_amax * dt_r + 0.5:
+                        self.temporally_verified.discard(r_key)
+                        return False
+                    v_avg_r = 0.5 * (p_spd + report.reported_speed)
+                    kin_err_r = min(
+                        abs(dx_r - report.reported_speed * dt_r),
+                        abs(dx_r - v_avg_r * dt_r)
+                    )
+                    if kin_err_r > 2.5 * dt_r:
+                        self.temporally_verified.discard(r_key)
+                        return False
+                    # Passed 2-slot differential kinematic verification!
+                    self.temporally_verified.add(r_key)
+
+        # Check 4: Target history dead-reckoning consistency
         th = self._ensure_target(report.target_id)
-
-        # First report for this target — no history to compare against, accept it
-        if th.last_pos is None or th.last_slot < report.timestamp - 2:
-            return True
-
-        dt = (report.timestamp - th.last_slot) * self.cfg.tau
-        if dt <= 0:
-            return True
-
-        # Check 1: velocity change feasibility
-        if th.last_speed is not None:
-            dv = abs(report.reported_speed - th.last_speed)
-            if dv > self.cfg.a_max * dt * 1.5:  # 1.5x safety margin for noise
-                return False
-
-        # Check 2: position change feasibility
-        dx = abs(report.reported_pos - th.last_pos)
-        if dx > 1000.0:
-            return True
-        if dx > self.cfg.v_max * dt * 1.5:  # 1.5x safety margin
-            return False
+        if th.last_pos is not None and 0 < (report.timestamp - th.last_slot) <= 2:
+            dt = (report.timestamp - th.last_slot) * self.cfg.tau
+            dx = abs(report.reported_pos - th.last_pos)
+            if dx <= 800.0:  # not a road-end wrap-around
+                if th.last_speed is not None:
+                    dv = abs(report.reported_speed - th.last_speed)
+                    if dv > eff_amax * dt + 0.5:
+                        return False
+                    v_avg = 0.5 * (th.last_speed + report.reported_speed)
+                    kin_err = min(
+                        abs(dx - report.reported_speed * dt),
+                        abs(dx - v_avg * dt)
+                    )
+                    if kin_err > 2.5 * dt + 1.0:
+                        return False
+                elif dx > eff_vmax * dt * 1.15:
+                    return False
 
         return True
 
     # ───────────────────────────────────────────────── Layer B
-    def layer_b_fuse(self, target_id: int, accepted_reports: List[CPMReport]) -> Tuple[float, float, List[int]]:
+    def layer_b_fuse(
+        self,
+        target_id: int,
+        accepted_reports: List[CPMReport],
+        slot_t: Optional[int] = None
+    ) -> Tuple[float, float, List[int], bool]:
         """
-        Cross-Validation & Fusion.
-        1. Compute mean pairwise distance between reporters
-        2. If consensus fails, reject all
-        3. Reject individual outliers vs trust-weighted median
-        4. Fuse accepted reports into a single estimate
-        
-        Returns: (fused_position, fusion_confidence, list_of_accepted_reporter_ids)
+        Joint (Position, Speed) Temporal-Anchored Medoid Consensus & Fusion.
+
+        Returns:
+            (fused_position, fusion_confidence, list_of_accepted_reporter_ids, ambiguous_tie)
         """
         if not self.cfg.enable_layer_b or len(accepted_reports) == 0:
             if len(accepted_reports) == 1:
                 r = accepted_reports[0]
-                return r.reported_pos, 0.5, [r.reporter_id]  # single report → half confidence
+                return r.reported_pos, 0.5, [r.reporter_id], False
             elif len(accepted_reports) == 0:
-                return 0.0, 0.0, []
-            # If layer B disabled, just average
+                return 0.0, 0.0, [], False
             positions = [r.reported_pos for r in accepted_reports]
-            return np.mean(positions), 1.0, [r.reporter_id for r in accepted_reports]
+            return float(np.mean(positions)), 1.0, [r.reporter_id for r in accepted_reports], False
 
-        positions = np.array([r.reported_pos for r in accepted_reports])
+        positions = np.array([r.reported_pos for r in accepted_reports], dtype=float)
+        speeds = np.array([r.reported_speed for r in accepted_reports], dtype=float)
 
-        # Single reporter → confidence scales with reporter's historical trust
+        th = self._ensure_target(target_id)
+        has_recent_history = (
+            th.last_pos is not None
+            and slot_t is not None
+            and 0 < (slot_t - th.last_slot) <= 2
+            and th.last_speed is not None
+        )
+
+        # Single reporter handling
         if len(accepted_reports) < self.cfg.min_reporters:
             r = accepted_reports[0]
             ts = self._ensure_trust(r.reporter_id)
+            is_verified = ((r.reporter_id, target_id) in self.temporally_verified) or has_recent_history
+            if not is_verified:
+                # First unverified single-reporter snapshot: record for next slot's Check 3,
+                # but abstain from locking target_history or scoring RMSE until verified on next slot
+                return r.reported_pos, 0.0, [r.reporter_id], True
             conf = 0.85 * ts.trust if not ts.quarantined else 0.1
-            return r.reported_pos, conf, [r.reporter_id]
+            return r.reported_pos, conf, [r.reporter_id], False
 
-        # Multi-reporter Medoid Consensus (immune to minority attacker pulling)
-        trusts = np.array([self._ensure_trust(r.reporter_id).trust for r in accepted_reports])
+        # Multi-reporter Joint (Position, Speed) Medoid Consensus
+        trusts = np.array([self._ensure_trust(r.reporter_id).trust for r in accepted_reports], dtype=float)
         trusts = np.maximum(trusts, 0.05)
 
-        # Count inlier support for each report candidate.
-        # Vectorized form of the pairwise loop; row sums preserve the original
-        # j-increasing accumulation order, so the result is bit-identical.
-        within = np.abs(positions[:, None] - positions[None, :]) <= self.cfg.consensus_thresh
-        inlier_scores = (within * trusts[None, :]).sum(axis=1)
+        verified_flags = np.array([
+            1.0 if (r.reporter_id, target_id) in self.temporally_verified else 0.0
+            for r in accepted_reports
+        ], dtype=float)
+
+        # Weight verified trajectories higher in consensus voting
+        effective_weights = trusts * (1.0 + 1.0 * verified_flags)
+
+        pos_within = np.abs(positions[:, None] - positions[None, :]) <= self.cfg.consensus_thresh
+        spd_within = np.abs(speeds[:, None] - speeds[None, :]) <= self.cfg.speed_consensus_thresh
+        within = pos_within & spd_within
+
+        inlier_scores = (within * effective_weights[None, :]).sum(axis=1)
+
+        if has_recent_history:
+            dt = (slot_t - th.last_slot) * self.cfg.tau
+            dx = np.abs(positions - th.last_pos)
+            v_avg = 0.5 * (th.last_speed + speeds)
+            kin_err = np.minimum(np.abs(dx - speeds * dt), np.abs(dx - v_avg * dt)) + np.abs(speeds - th.last_speed) * dt
+            inlier_scores = inlier_scores + 0.5 * np.exp(-kin_err / 2.5)
+
+        # If reporters disagree on the very first slot before any reporter is temporally verified
+        # and before target history exists, abstain for 1 slot so Check 3 eliminates shift attackers
+        pos_spread = float(positions.max() - positions.min())
+        if pos_spread > self.cfg.consensus_thresh and not has_recent_history and verified_flags.sum() == 0:
+            avg_pos = float(np.average(positions, weights=trusts))
+            return avg_pos, 0.0, [r.reporter_id for r in accepted_reports], True
 
         best_medoid = int(np.argmax(inlier_scores))
         ref_pos = positions[best_medoid]
+        ref_spd = speeds[best_medoid]
 
         # Separate consensus inliers from outliers relative to medoid
-        inlier_mask = np.abs(positions - ref_pos) <= self.cfg.outlier_thresh
+        inlier_mask = (
+            (np.abs(positions - ref_pos) <= self.cfg.outlier_thresh)
+            & (np.abs(speeds - ref_spd) <= self.cfg.speed_consensus_thresh * 1.5)
+        )
         accepted = [r for i, r in enumerate(accepted_reports) if inlier_mask[i]]
-        rejected_ids = [r.reporter_id for i, r in enumerate(accepted_reports) if not inlier_mask[i]]
 
         if len(accepted) == 0:
             closest = min(accepted_reports, key=lambda r: abs(r.reported_pos - ref_pos))
-            return closest.reported_pos, 0.2, [closest.reporter_id]
+            return closest.reported_pos, 0.2, [closest.reporter_id], False
 
         # Trust-weighted average of accepted consensus reports
         accepted_positions = positions[inlier_mask]
-        accepted_trusts = trusts[inlier_mask]
+        accepted_trusts = effective_weights[inlier_mask]
         fused_pos = float(np.average(accepted_positions, weights=accepted_trusts))
 
-        # Fusion confidence is high when multiple verified reporters agree
+        # Fusion confidence is high when verified reporters agree
         n_accepted = len(accepted)
         n_total = len(accepted_reports)
         fusion_conf = min(1.0, 0.7 + 0.3 * (n_accepted / max(self.cfg.min_reporters, 1)))
         if n_total > n_accepted:
             fusion_conf *= (1.0 - 0.2 * (n_total - n_accepted) / n_total)
 
-        return fused_pos, float(np.clip(fusion_conf, 0.1, 1.0)), [r.reporter_id for r in accepted]
+        return fused_pos, float(np.clip(fusion_conf, 0.1, 1.0)), [r.reporter_id for r in accepted], False
 
     # ───────────────────────────────────────────────── Layer C
     def layer_c_update(self, icv_id: int, passed: bool, slot_t: int):
@@ -270,26 +356,15 @@ class FalseCPMResistance:
             if icv_id not in active_icv_ids and (slot_t - ts.last_seen > 30) and not ts.quarantined:
                 ts.trust = (1 - self.cfg.decay_rate) * ts.trust + self.cfg.decay_rate * 0.8
 
-
     # ───────────────────────────────────────────────── Main Pipeline
     def process_slot(
         self,
         slot_t: int,
-        cpms: Dict[int, List[CPMReport]],   # target_id → list of CPM reports from different ICVs
+        cpms: Dict[int, List[CPMReport]],   # target_id -> list of CPM reports from different ICVs
         true_pos: Optional[Dict[int, float]] = None   # ground truth for metrics (None in production)
     ) -> Tuple[Dict[int, float], Dict[int, float], Dict[int, float]]:
         """
         Run the full three-layer pipeline for one time slot.
-
-        Args:
-            slot_t: current slot number
-            cpms: dict mapping target_id → list of CPMReports from different ICVs
-            true_pos: optional ground truth positions for evaluation
-
-        Returns:
-            fused_positions: target_id → fused position estimate
-            trust_vector: icv_id → current trust score (0 = quarantined)
-            fusion_confidence: target_id → confidence in the fused estimate [0,1]
         """
         stats = {
             'slot': slot_t,
@@ -303,6 +378,7 @@ class FalseCPMResistance:
         fused_positions = {}
         fusion_confidence = {}
         reporters_this_slot = set()
+        self.last_accepted_reports = {}
 
         for target_id, reports in cpms.items():
             stats['total_reports'] += len(reports)
@@ -320,29 +396,46 @@ class FalseCPMResistance:
 
                 if self.layer_a_check(r):
                     a_passed.append(r)
+                    if r.target_id >= 0:
+                        self.reporter_history[(r.reporter_id, r.target_id)] = (
+                            r.reported_pos, r.reported_speed, r.timestamp
+                        )
                 else:
                     stats['layer_a_rejected'] += 1
                     self.layer_c_update(r.reporter_id, passed=False, slot_t=slot_t)
+                    if r.target_id >= 0:
+                        self.reporter_history[(r.reporter_id, r.target_id)] = (
+                            r.reported_pos, r.reported_speed, r.timestamp
+                        )
 
             # ── Layer B: Cross-Validation & Fusion ──
-            fused_pos, conf, accepted_ids = self.layer_b_fuse(target_id, a_passed)
-            
-            # Identify outlier reporters (in a_passed but not in accepted_ids)
+            raw_b = self.layer_b_fuse(target_id, a_passed, slot_t=slot_t)
+            if len(raw_b) == 4:
+                fused_pos, conf, accepted_ids, ambiguous_tie = raw_b
+            else:
+                fused_pos, conf, accepted_ids = raw_b
+                ambiguous_tie = False
+
             accepted_set = set(accepted_ids)
-            for r in a_passed:
-                if r.reporter_id not in accepted_set:
-                    stats['layer_b_outliers'] += 1
-                    self.layer_c_update(r.reporter_id, passed=False, slot_t=slot_t)
-                else:
-                    self.layer_c_update(r.reporter_id, passed=True, slot_t=slot_t)
+            self.last_accepted_reports[target_id] = accepted_set
+
+            # Update Layer C trust (unless epistemic abstention on unverified first-slot snapshot)
+            if not ambiguous_tie:
+                for r in a_passed:
+                    if r.reporter_id not in accepted_set:
+                        stats['layer_b_outliers'] += 1
+                        self.layer_c_update(r.reporter_id, passed=False, slot_t=slot_t)
+                    else:
+                        self.layer_c_update(r.reporter_id, passed=True, slot_t=slot_t)
 
             fused_positions[target_id] = fused_pos
             fusion_confidence[target_id] = conf
 
-            # Update target history for next slot's Layer A only if we have valid consensus reports
-            if accepted_ids:
+            # Update target history for next slot's Layer A only if we have verified consensus
+            if accepted_ids and not ambiguous_tie:
                 th = self._ensure_target(target_id)
-                best_report = max(a_passed, key=lambda r: self._ensure_trust(r.reporter_id).trust)
+                inlier_reports = [r for r in a_passed if r.reporter_id in accepted_set]
+                best_report = max(inlier_reports, key=lambda r: self._ensure_trust(r.reporter_id).trust)
                 th.last_speed = best_report.reported_speed
                 th.last_pos = fused_pos
                 th.last_slot = slot_t
@@ -376,21 +469,12 @@ class FalseCPMResistance:
                          nic_idx: np.ndarray, icv_idx: np.ndarray) -> np.ndarray:
         """
         Multiply WSMM weights by trust scores. Quarantined ICVs get weight = 0.
-        
-        Args:
-            base_w: (U, V) original weight matrix = q * s_unit * tau
-            cand: (U, V) bool candidate mask
-            nic_idx: global indices of N-ICVs (U items)
-            icv_idx: global indices of ICVs (V items)
-            
-        Returns:
-            modified_w: (U, V) trust-scaled weight matrix
         """
         w = base_w.copy()
         for j, icv_gid in enumerate(icv_idx):
-            ts = self._ensure_trust(icv_gid)
+            ts = self._ensure_trust(int(icv_gid))
             if ts.quarantined:
-                w[:, j] = 0.0         # quarantined → zero weight → never selected
+                w[:, j] = 0.0         # quarantined -> zero weight -> never selected
                 cand[:, j] = False
             else:
                 w[:, j] *= ts.trust   # scale by trust
@@ -400,28 +484,17 @@ class FalseCPMResistance:
                         icv_idx: np.ndarray, nic_idx: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Scale BCA AoI weights by trust (ICVs) and fusion confidence (N-ICVs).
-        
-        Args:
-            base_w_v: AoI weights for ICVs (= A_v + 1)
-            base_w_u: AoI weights for N-ICVs (= A_u + 1)
-            icv_idx: global ICV indices
-            nic_idx: global N-ICV indices
-            
-        Returns:
-            (modified_w_v, modified_w_u)
         """
         w_v = base_w_v.copy()
         w_u = base_w_u.copy()
 
-        # ICVs: scale by trust
         for j, icv_gid in enumerate(icv_idx):
-            ts = self._ensure_trust(icv_gid)
+            ts = self._ensure_trust(int(icv_gid))
             w_v[j] *= ts.trust
 
-        # N-ICVs: scale by fusion confidence
         for i, nic_gid in enumerate(nic_idx):
-            th = self.target_history.get(nic_gid)
-            if th is not None:
+            th = self.target_history.get(int(nic_gid))
+            if th is not None and th.fusion_confidence > 0:
                 w_u[i] *= th.fusion_confidence
 
         return np.maximum(w_v, 1e-6), np.maximum(w_u, 1e-6)
@@ -436,7 +509,7 @@ class FalseCPMResistance:
         U, V = Z.shape
         W = np.zeros(U)
         for j, icv_gid in enumerate(icv_idx):
-            ts = self._ensure_trust(icv_gid)
+            ts = self._ensure_trust(int(icv_gid))
             if not ts.quarantined:
                 W += Z[:, j] * base_w[:, j]
         return W
@@ -457,7 +530,6 @@ class FalseCPMResistance:
     def get_migration_trust_metadata(self, icv_id: int) -> dict:
         """
         Package trust metadata for DT migration.
-        The receiving RSU should call receive_migration_trust() with this data.
         """
         ts = self._ensure_trust(icv_id)
         return {
@@ -477,7 +549,6 @@ class FalseCPMResistance:
         """
         icv_id = meta['icv_id']
         ts = self._ensure_trust(icv_id)
-        # Take the MINIMUM of current and incoming trust (conservative)
         ts.trust = min(ts.trust, meta['trust'])
         ts.quarantined = ts.quarantined or meta['quarantined']
         ts.n_pass = max(ts.n_pass, meta['n_pass'])
