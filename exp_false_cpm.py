@@ -234,7 +234,8 @@ class SecureDTEnv:
                     nic_pos=m.pos[nic_idx], icv_pos=m.pos[icv_idx],
                     r_sense=pc['r_sense'], road_length=m.L,
                     s_req=pc['s_req'] if defence_active else None,
-                    nic_urgency=self.A[nic_idx] + 1.0
+                    nic_urgency=self.A[nic_idx] + 1.0,
+                    w_phys=w_base if defence_active else None
                 )
             else:
                 Zs = sub1_wsmm.select('wsmm', cand_secure, w_secure, pc['phi_max'],
@@ -259,7 +260,7 @@ class SecureDTEnv:
             s_v = m.s_own + m.s_unit * sel_flag
             c_cp = (Z_full * (m.c_unit * m.s_unit)[None, :]).sum(1)
 
-            # Access selection: nearest RSU (MDA baseline)
+            # Access selection: nearest RSU with Cooperative RSU Alignment (Constraint C4)
             dx = m.pos[:, None] - self.centers[None, :]
             dist = np.abs(dx)
             in_range = (dist <= cfg['rsu']['radius']) & m.active[:, None]
@@ -269,8 +270,18 @@ class SecureDTEnv:
                     sx[i] = int(np.argmin(np.where(in_range[i], dist[i], np.inf)))
             for u in nic_idx:
                 sel = np.flatnonzero(Z_full[u])
-                if sel.size and sx[sel[0]] >= 0:
-                    sx[u] = sx[sel[0]]
+                if sel.size:
+                    if defence_active:
+                        # Find a common RSU in range of all selected helpers (satisfies C4)
+                        common_rsus = np.flatnonzero(in_range[sel].all(axis=0))
+                        if common_rsus.size:
+                            best_r = int(common_rsus[np.argmin(dist[sel][:, common_rsus].mean(axis=0))])
+                            sx[sel] = best_r
+                            sx[u] = best_r
+                        elif sx[sel[0]] >= 0:
+                            sx[u] = sx[sel[0]]
+                    elif sx[sel[0]] >= 0:
+                        sx[u] = sx[sel[0]]
 
             # Constraint C6: Satisfied if vetted uncorrupted perceived data >= s_req
             c6_ok = np.zeros(self.N, bool)

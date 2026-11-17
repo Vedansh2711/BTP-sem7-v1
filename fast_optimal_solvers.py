@@ -52,79 +52,68 @@ class Spatial1DGrid:
 def fast_spatial_greedy_matching(cand: np.ndarray, w: np.ndarray, phi_max: int,
                                  nic_pos: np.ndarray = None, icv_pos: np.ndarray = None,
                                  r_sense: float = 300.0, road_length: float = 2000.0,
-                                 s_req: float = None, nic_urgency: np.ndarray = None) -> np.ndarray:
+                                 s_req: float = None, nic_urgency: np.ndarray = None,
+                                 w_phys: np.ndarray = None) -> np.ndarray:
     """
     Subproblem 1 Fast Solver: Two-Phase C6-Satisficing Spatial Priority Greedy.
-
-    Args:
-        cand: (U, V) boolean candidate visibility mask.
-        w: (U, V) weight matrix (q * s_unit * tau * trust).
-        phi_max: maximum ICVs that can serve one N-ICV (quota).
-        nic_pos: optional (U,) positions of N-ICVs.
-        icv_pos: optional (V,) positions of ICVs.
-        r_sense: sensing radius.
-        road_length: total road length.
-        s_req: optional C6 perception threshold (e.g. 4.0 Mb). When provided,
-               Phase 1 stops adding ICVs to an N-ICV once its accumulated weight
-               reaches s_req, avoiding unnecessary bandwidth/CPU congestion and
-               saving remaining ICVs for other N-ICVs.
-        nic_urgency: optional (U,) urgency weights (e.g. A[u] + 1).
-
-    Returns:
-        Z: (U, V) int8 allocation matrix satisfying C1, C2, C3.
+    Includes C6 Feasibility Pruning: if an N-ICV cannot reach s_req with the
+    currently available ICVs, it does not pointlessly consume ICV uplink bandwidth.
     """
     U, V = cand.shape
     Z = np.zeros((U, V), dtype=np.int8)
     if U == 0 or V == 0 or not cand.any():
         return Z
 
+    w_c6 = w_phys if w_phys is not None else w
+
     if nic_pos is not None and icv_pos is not None:
         grid = Spatial1DGrid(road_length, cell_size=max(50.0, r_sense / 2.0))
         for v in range(V):
             grid.insert(v, float(icv_pos[v]))
 
-        # Pre-query valid candidates per N-ICV
         candidates_per_u = []
         feasible_counts = np.zeros(U, dtype=int)
-        total_weights = np.zeros(U, dtype=float)
+        total_phys_weights = np.zeros(U, dtype=float)
         for u in range(U):
             nearby = grid.query(float(nic_pos[u]), r_sense)
             valid = [v for v in nearby if cand[u, v] and w[u, v] > 0]
             valid.sort(key=lambda v: w[u, v], reverse=True)
             candidates_per_u.append(valid)
             feasible_counts[u] = len(valid)
-            total_weights[u] = sum(w[u, v] for v in valid[:phi_max])
+            total_phys_weights[u] = sum(w_c6[u, v] for v in valid[:phi_max])
 
-        # Priority ordering:
-        # N-ICVs that CAN satisfy s_req (or have positive weight) come first,
-        # ordered by high urgency and scarcity (fewer alternatives first so they aren't starved).
         def priority_key(u):
             if feasible_counts[u] == 0:
                 return (2, 0, 0.0)
-            can_meet = 0 if (s_req is None or total_weights[u] >= s_req - 1e-9) else 1
+            can_meet = 0 if (s_req is None or total_phys_weights[u] >= s_req - 1e-9) else 1
             urg = -float(nic_urgency[u]) if nic_urgency is not None else 0.0
-            # Scarcity-aware: among satisfiable N-ICVs, serve those with fewer options or higher urgency first
-            return (can_meet, urg, feasible_counts[u], -total_weights[u])
+            return (can_meet, urg, feasible_counts[u], -total_phys_weights[u])
 
         u_priority = sorted(range(U), key=priority_key)
         icv_available = np.ones(V, dtype=bool)
-        acc_weight = np.zeros(U, dtype=float)
-        nic_count = np.zeros(U, dtype=int)
 
-        # Phase 1: Satisfy s_req (if s_req is specified) or fill up to phi_max
         for u in u_priority:
             valid = [v for v in candidates_per_u[u] if icv_available[v]]
             if not valid:
                 continue
+            # C6 Feasibility Pruning: if s_req is specified and the available ICVs
+            # cannot reach s_req even using up to phi_max helpers, skip allocation
+            # so we don't waste ICV uplink bandwidth on a guaranteed C6 failure.
+            if s_req is not None:
+                max_possible = sum(w_c6[u, v] for v in valid[:phi_max])
+                if max_possible < s_req - 1e-9:
+                    continue
+
+            acc_phys = 0.0
+            nic_count = 0
             for v in valid:
-                if nic_count[u] >= phi_max:
+                if nic_count >= phi_max:
                     break
                 Z[u, v] = 1
                 icv_available[v] = False
-                acc_weight[u] += w[u, v]
-                nic_count[u] += 1
-                # If s_req is given and met with safety margin, stop hogging extra ICVs
-                if s_req is not None and acc_weight[u] >= s_req * 1.05:
+                acc_phys += w_c6[u, v]
+                nic_count += 1
+                if s_req is not None and acc_phys >= s_req:
                     break
 
         return Z

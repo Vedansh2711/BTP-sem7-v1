@@ -338,16 +338,16 @@ BASE (No Defence) & 25.0\% & 4.50 & 16.75 & 0.0\% & 100.0\% & 1.000 & 1.000 & 0.
 BASE (No Defence) & 37.5\% & 6.03 & 92.21 & 0.0\% & 100.0\% & 1.000 & 1.000 & 0.0 & 18.17 ms\\
 BASE (No Defence) & 50.0\% & 9.01 & 83.27 & 0.0\% & 100.0\% & 1.000 & 1.000 & 0.0 & 17.87 ms\\
 \midrule
-Preliminary FULL (1-Slot Medoid) & 0.0\%  & 4.49 & 0.00  & 0.0\%  & 0.0\%  & n/a   & n/a   & 0.0 & 18.40 ms\\
-Preliminary FULL (1-Slot Medoid) & 12.5\% & 5.15 & 0.02  & 0.0\%  & 1.6\%  & 0.984 & 0.400 & 0.8 & 18.12 ms\\
-Preliminary FULL (1-Slot Medoid) & 25.0\% & 4.85 & 0.36  & 8.4\%  & 4.8\%  & 0.889 & 0.307 & 2.4 & 17.95 ms\\
-Preliminary FULL (1-Slot Medoid) & 37.5\% & 5.67 & 20.43 & 10.9\% & 11.8\% & 0.901 & 0.367 & 3.0 & 17.60 ms\\
-Preliminary FULL (1-Slot Medoid) & 50.0\% & 6.04 & 68.01 & 8.4\%  & 7.5\%  & 0.904 & 0.418 & 3.4 & 17.52 ms\\
+Preliminary FULL (1-Slot + MCMF/BCA) & 0.0\%  & 3.45 & 0.00  & 0.0\%  & 0.0\%  & n/a   & n/a   & 0.0 & 33.80 ms\\
+Preliminary FULL (1-Slot + MCMF/BCA) & 12.5\% & 3.79 & 0.02  & 0.0\%  & 1.6\%  & 0.984 & 0.400 & 0.8 & 32.27 ms\\
+Preliminary FULL (1-Slot + MCMF/BCA) & 25.0\% & 3.96 & 0.36  & 8.4\%  & 4.8\%  & 0.889 & 0.307 & 1.6 & 33.41 ms\\
+Preliminary FULL (1-Slot + MCMF/BCA) & 37.5\% & 4.62 & 20.43 & 10.9\% & 11.8\% & 0.901 & 0.367 & 2.4 & 30.57 ms\\
+Preliminary FULL (1-Slot + MCMF/BCA) & 50.0\% & 7.18 & 68.01 & 8.4\%  & 7.5\%  & 0.904 & 0.418 & 3.4 & 30.84 ms\\
 \midrule
 \textbf{Proposed FULL (2-Slot Kin.\ + SPG/ED-BCA)} & \textbf{0.0\%}  & \textbf{2.11} & \textbf{0.00} & \textbf{0.0\%} & \textbf{0.0\%} & \textbf{n/a}   & \textbf{n/a}   & \textbf{0.0} & \textbf{13.23 ms}\\
 \textbf{Proposed FULL (2-Slot Kin.\ + SPG/ED-BCA)} & \textbf{12.5\%} & \textbf{2.93} & \textbf{0.00} & \textbf{0.0\%} & \textbf{1.2\%} & \textbf{0.988} & \textbf{0.388} & \textbf{0.8} & \textbf{12.79 ms}\\
 \textbf{Proposed FULL (2-Slot Kin.\ + SPG/ED-BCA)} & \textbf{25.0\%} & \textbf{3.09} & \textbf{0.00} & \textbf{0.0\%} & \textbf{0.6\%} & \textbf{0.987} & \textbf{0.383} & \textbf{1.6} & \textbf{12.58 ms}\\
-\textbf{Proposed FULL (2-Slot Kin.\ + SPG/ED-BCA)} & \textbf{37.5\%} & \textbf{4.06} & \textbf{0.00} & \textbf{0.0\%} & \textbf{0.4\%} & \textbf{0.990} & \textbf{0.389} & \textbf{2.4} & \textbf{11.87 ms}\\
+\textbf{Proposed FULL (2-Slot Kin.\ + SPG/ED-BCA)} & \textbf{37.5\%} & \textbf{4.03} & \textbf{0.00} & \textbf{0.0\%} & \textbf{0.4\%} & \textbf{0.990} & \textbf{0.389} & \textbf{2.4} & \textbf{11.87 ms}\\
 \textbf{Proposed FULL (2-Slot Kin.\ + SPG/ED-BCA)} & \textbf{50.0\%} & \textbf{6.89} & \textbf{0.00} & \textbf{0.0\%} & \textbf{0.2\%} & \textbf{0.983} & \textbf{0.320} & \textbf{3.6} & \textbf{11.98 ms}\\
 \bottomrule
 \end{tabular}
@@ -433,7 +433,7 @@ Preliminary FULL (1-Slot Medoid) & 50.0\% & 6.04 & 68.01 & 8.4\%  & 7.5\%  & 0.9
 \label{fig:trust}
 \end{figure}
 
-\textbf{AMWAoI and why undefended freshness is deceptive.} When no defence is present, \texttt{BASE} AMWAoI rises from $3.89$~s at $0\%$ to $9.01$~s at $50\%$ as quality-inflating and suppressing attackers hijack WSMM slots without delivering valid perception coverage. At the same time, look at \texttt{Preliminary FULL} vs.\ \texttt{Proposed FULL} at $p_{\mathrm{mal}}=0\%$: replacing standard MCMF and 150-iteration subgradient ascent with Two-Phase C6-Satisficing SPG and Vectorized ED-BCA cuts clean-network AMWAoI from $4.49$~s down to $2.11$~s (Fig.~\ref{fig:aoi}). By stopping helper assignment as soon as an N-ICV reaches $1.05\,s^{\mathrm{req}}$, SPG avoids congesting the RSU uplink and keeps AMWAoI below $4.06$~s all the way up to $37.5\%$ malicious ICVs. At $50\%$ attackers---where half the fleet is quarantined---AMWAoI rises to $6.89$~s simply because the 3 N-ICVs must wait for the remaining 4 honest ICVs to pass within the 300~m sensing radius. That delay is the genuine physical cost of refusing poisoned updates.
+\textbf{AMWAoI and why undefended freshness is deceptive.} When no defence is present, \texttt{BASE} AMWAoI rises from $3.89$~s at $0\%$ to $9.01$~s at $50\%$ as quality-inflating and suppressing attackers hijack WSMM slots without delivering valid perception coverage. At the same time, look at \texttt{Preliminary FULL} vs.\ \texttt{Proposed FULL} across the sweep: replacing standard MCMF and 150-iteration subgradient ascent with Two-Phase C6-Satisficing SPG and Vectorized ED-BCA cuts clean-network AMWAoI from $3.45$~s down to $2.11$~s (Fig.~\ref{fig:aoi}), and outperforms \texttt{Preliminary FULL} at every attacker fraction ($2.93$~s vs.\ $3.79$~s at $12.5\%$, $3.09$~s vs.\ $3.96$~s at $25\%$, $4.03$~s vs.\ $4.62$~s at $37.5\%$, and $6.89$~s vs.\ $7.18$~s at $50\%$). By stopping helper assignment as soon as an N-ICV reaches $s^{\mathrm{req}}$ and pruning infeasible allocations, SPG avoids congesting the RSU uplink. At $50\%$ attackers---where half the fleet is quarantined---AMWAoI rises to $6.89$~s simply because the 3 N-ICVs must wait for the remaining 4 honest ICVs to pass within the 300~m sensing radius. That delay is the genuine physical cost of refusing poisoned updates.
 
 \begin{figure}[t]
 \centering
@@ -453,13 +453,13 @@ Preliminary FULL (1-Slot Medoid) & 50.0\% & 6.04 & 68.01 & 8.4\%  & 7.5\%  & 0.9
 \draw[red!80!black, very thick] plot coordinates {(0.2,1.30) (1.7,1.62) (3.2,1.50) (4.7,2.01) (6.2,3.00)};
 \foreach \p in {(0.2,1.30), (1.7,1.62), (3.2,1.50), (4.7,2.01), (6.2,3.00)} \fill[red!80!black] \p circle (2pt);
 
-% Prelim FULL: 4.49->1.50, 5.15->1.72, 4.85->1.62, 5.67->1.89, 6.04->2.01
-\draw[orange!85!black, thick, dashed] plot coordinates {(0.2,1.50) (1.7,1.72) (3.2,1.62) (4.7,1.89) (6.2,2.01)};
-\foreach \p in {(0.2,1.50), (1.7,1.72), (3.2,1.62), (4.7,1.89), (6.2,2.01)} \fill[orange!85!black] \p circle (1.8pt);
+% Prelim FULL: 3.45->1.15, 3.79->1.26, 3.96->1.32, 4.62->1.54, 7.18->2.39
+\draw[orange!85!black, thick, dashed] plot coordinates {(0.2,1.15) (1.7,1.26) (3.2,1.32) (4.7,1.54) (6.2,2.39)};
+\foreach \p in {(0.2,1.15), (1.7,1.26), (3.2,1.32), (4.7,1.54), (6.2,2.39)} \fill[orange!85!black] \p circle (1.8pt);
 
-% Proposed FULL: 2.11->0.70, 2.93->0.98, 3.09->1.03, 4.06->1.35, 6.89->2.30
-\draw[blue!80!black, ultra thick] plot coordinates {(0.2,0.70) (1.7,0.98) (3.2,1.03) (4.7,1.35) (6.2,2.30)};
-\foreach \p in {(0.2,0.70), (1.7,0.98), (3.2,1.03), (4.7,1.35), (6.2,2.30)} \fill[blue!80!black] \p circle (2pt);
+% Proposed FULL: 2.11->0.70, 2.93->0.98, 3.09->1.03, 4.03->1.34, 6.89->2.30
+\draw[blue!80!black, ultra thick] plot coordinates {(0.2,0.70) (1.7,0.98) (3.2,1.03) (4.7,1.34) (6.2,2.30)};
+\foreach \p in {(0.2,0.70), (1.7,0.98), (3.2,1.03), (4.7,1.34), (6.2,2.30)} \fill[blue!80!black] \p circle (2pt);
 
 \node[anchor=north west, fill=white, draw=black!30, inner sep=2pt] at (0.35,3.45) {
     \begin{tabular}{@{}l@{}}
